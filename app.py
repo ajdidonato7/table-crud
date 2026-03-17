@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import pandas as pd
 import yaml
@@ -58,7 +59,11 @@ def format_value(val, col_type=""):
         return str(val)
     escaped = str(val).replace("'", "''")
     if col_type.lower().strip() == "variant":
-        return f"PARSE_JSON('{escaped}')"
+        try:
+            json.loads(str(val))
+            return f"PARSE_JSON('{escaped}')"
+        except (json.JSONDecodeError, ValueError):
+            return f"'{escaped}'"
     return f"'{escaped}'"
 
 
@@ -138,16 +143,22 @@ if "original_df" in st.session_state:
 
     edited_df = st.data_editor(
         original_df,
-        num_rows="fixed",
+        num_rows="dynamic",
         use_container_width=True,
         key=f"editor_{st.session_state['editor_key']}",
-        disabled=[row_id_col],
     )
+
+    editor_state = st.session_state[f"editor_{st.session_state['editor_key']}"]
+    added_rows = editor_state.get("added_rows", [])
+    deleted_rows = editor_state.get("deleted_rows", [])
 
     if st.button("Save Changes", type="primary"):
         statements = []
 
+        # --- Updates (existing rows that were modified) ---
         for idx in range(len(original_df)):
+            if idx in deleted_rows:
+                continue
             orig_row = original_df.iloc[idx]
             edit_row = edited_df.iloc[idx]
             rid = orig_row[row_id_col]
@@ -164,16 +175,42 @@ if "original_df" in st.session_state:
                 stmt = f"UPDATE {fqn} SET {', '.join(set_clauses)} WHERE {where}"
                 statements.append(stmt)
 
+        # --- Inserts (new rows added via the editor) ---
+        for row_dict in added_rows:
+            cols_with_values = {c: v for c, v in row_dict.items() if v is not None and str(v).strip() != ""}
+            if not cols_with_values:
+                continue
+            col_names = ", ".join(f"`{c}`" for c in cols_with_values)
+            col_vals = ", ".join(format_value(v, col_types.get(c, "")) for c, v in cols_with_values.items())
+            stmt = f"INSERT INTO {fqn} ({col_names}) VALUES ({col_vals})"
+            statements.append(stmt)
+
+        # --- Deletes (rows removed via the editor) ---
+        for idx in deleted_rows:
+            rid = original_df.iloc[idx][row_id_col]
+            rid_type = col_types.get(row_id_col, "")
+            where = f"`{row_id_col}` = {format_value(rid, rid_type)}"
+            stmt = f"DELETE FROM {fqn} WHERE {where}"
+            statements.append(stmt)
+
         if not statements:
             st.info("No changes detected.")
         else:
-            with st.expander(f"SQL ({len(statements)} updates)", expanded=False):
+            n_updates = sum(1 for s in statements if s.startswith("UPDATE"))
+            n_inserts = sum(1 for s in statements if s.startswith("INSERT"))
+            n_deletes = sum(1 for s in statements if s.startswith("DELETE"))
+            summary = ", ".join(
+                f"{n} {label}" for n, label in
+                [(n_updates, "update"), (n_inserts, "insert"), (n_deletes, "delete")]
+                if n > 0
+            )
+            with st.expander(f"SQL ({summary})", expanded=False):
                 for s in statements:
                     st.code(s, language="sql")
-            with st.spinner(f"Writing {len(statements)} update(s)..."):
+            with st.spinner(f"Writing {len(statements)} statement(s)..."):
                 try:
                     execute_sql(config, statements, catalog, schema)
-                    st.success(f"Saved {len(statements)} row(s) to Databricks.")
+                    st.success(f"Saved to Databricks: {summary}.")
                     st.session_state["original_df"] = edited_df.copy()
                     st.session_state["editor_key"] += 1
                     st.rerun()
