@@ -1,5 +1,7 @@
 # Databricks Table Editor
 
+> **Disclaimer:** This is a personal project and is not affiliated with, endorsed by, or associated with Databricks, Inc. or my employment there. All opinions and code are my own.
+
 A Streamlit app that lets you query a Databricks table, edit rows in-browser, and write changes back via SQL `UPDATE` statements.
 
 ## How it works
