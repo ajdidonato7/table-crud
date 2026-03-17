@@ -1,0 +1,8 @@
+databricks:
+  host: "<databricks_host>"
+  http_path: "<sql_warehouse_path>"
+  token: "<pat_token>"
+  catalog: "<catalog_name>"
+  schema: "<schema_name"
+  unique_row_id: "<unique_column_name>"    # column name that uniquely identifies each row (e.g. "id", "doc_id")
+  table: "<table_name>"     # table name to write updates back to
